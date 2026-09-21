@@ -19,7 +19,7 @@ jobs:
           "$HOME/.local/bin/solana-verify" --version
 
       - name: Build
-        run: solana-verify build --library-name ant_mine
+        run: solana-verify build --library-name ant_mine --base-image solanafoundation/solana-verifiable-build:4.0.3
 
       - name: Check size and security.txt
         run: |
