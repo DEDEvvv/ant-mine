@@ -16,3 +16,4 @@ strip = true
 
 [dependencies]
 solana-program = "1.18.20"
+zeroize_derive = "=1.4.2"
