@@ -10,11 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install solana-verify
-        run: cargo install solana-verify --version 0.4.11
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL "https://github.com/solana-foundation/solana-verifiable-build/releases/download/v0.5.1/solana-verify-0.5.1-linux" -o "$HOME/.local/bin/solana-verify"
+          chmod +x "$HOME/.local/bin/solana-verify"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/solana-verify" --version
 
       - name: Build
         run: solana-verify build --library-name ant_mine
