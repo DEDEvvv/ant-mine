@@ -1,1 +1,9 @@
-# no extra linker flags
+[target.sbpf-solana-solana]
+linker = "/build/.cargo/sbf-link"
+
+[target.sbf-solana-solana]
+linker = "/build/.cargo/sbf-link"
+
+[env]
+CARGO_TARGET_SBPF_SOLANA_SOLANA_LINKER = { value = "sbf-link", relative = true, force = true }
+CARGO_TARGET_SBF_SOLANA_SOLANA_LINKER = { value = "sbf-link", relative = true, force = true }
