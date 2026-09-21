@@ -6,16 +6,37 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install solana-verify
-        run: cargo install solana-verify --locked
+        run: cargo install solana-verify --version 0.4.11
+
       - name: Build
         run: solana-verify build --library-name ant_mine
-      - name: Upload .so
-        uses: actions/upload-artifact@v4
+
+      - name: Check size and security.txt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('target/deploy/ant_mine.so')
+          b = p.read_bytes()
+          n = len(b)
+          print('size', n)
+          if n > 107256:
+              raise SystemExit('TOO BIG %s > 107256' % n)
+          if b'=======BEGIN SECURITY.TXT V1=======' not in b:
+              raise SystemExit('missing security.txt magic')
+          if b'zoeefm@proton.me' not in b:
+              raise SystemExit('missing contact')
+          print('security.txt OK, fits on-chain')
+          PY
+
+      - uses: actions/upload-artifact@v4
         with:
           name: ant_mine-so
           path: target/deploy/ant_mine.so
