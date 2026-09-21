@@ -5,10 +5,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install solana-verify
         run: |
@@ -19,7 +19,7 @@ jobs:
           "$HOME/.local/bin/solana-verify" --version
 
       - name: Build
-        run: solana-verify build --library-name ant_mine
+        run: solana-verify build --library-name ant_mine --base-image solanafoundation/solana-verifiable-build:4.0.3
 
       - name: Check size and security.txt
         run: |
@@ -38,7 +38,7 @@ jobs:
           print('security.txt OK, fits on-chain')
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ant_mine-so
           path: target/deploy/ant_mine.so
