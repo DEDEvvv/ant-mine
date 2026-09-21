@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "lib"]
+name = "ant_mine"
+crate-type = ["cdylib"]
 
 [profile.release]
 opt-level = "s"
 codegen-units = 1
 overflow-checks = true
+panic = "abort"
+strip = "symbols"
 
 [dependencies]
-borsh = "0.10"
 solana-program = "1.18.20"
-solana-security-txt = "1.1.1"
-spl-token = { version = "4.0.0", features = ["no-entrypoint"] }
