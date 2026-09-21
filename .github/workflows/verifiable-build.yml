@@ -1,0 +1,22 @@
+name: verifiable-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Install solana-verify
+        run: cargo install solana-verify --locked
+      - name: Build
+        run: solana-verify build --library-name ant_mine
+      - name: Upload .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: ant_mine-so
+          path: target/deploy/ant_mine.so
+          if-no-files-found: error
