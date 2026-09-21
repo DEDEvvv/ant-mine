@@ -1,84 +1,69 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     declare_id,
     entrypoint,
     entrypoint::ProgramResult,
+    instruction::{AccountMeta, Instruction},
     program::{invoke, invoke_signed},
     program_error::ProgramError,
-    program_pack::Pack,
     pubkey::Pubkey,
     rent::Rent,
     system_instruction,
     sysvar::{clock::Clock, Sysvar},
 };
-use spl_token::instruction as token_ix;
-use spl_token::state::Account as TokenAccount;
-use solana_security_txt::security_txt;
 
 declare_id!("APNv3yTr5Zd5UYrv2LpHnfoLQ1WKA8K3gZ1Sk3DZeZL5");
 
-security_txt! {
-    name: "ANT Mine",
-    project_url: "https://antfm.fun",
-    contacts: "email:zoeefm@proton.me",
-    policy: "Report vulnerabilities by email to zoeefm@proton.me. Do not open public issues for unfixed vulnerabilities.",
-    preferred_languages: "zh,en"
+/// Solscan 认这段魔法字。必须真正编进 ELF，不能靠会被删掉的宏。
+#[used]
+#[no_mangle]
+static SECURITY_TXT: &[u8] = b"=======BEGIN SECURITY.TXT V1=======\0name\0ANT Mine\0project_url\0https://antfm.fun\0contacts\0email:zoeefm@proton.me\0policy\0email zoeefm@proton.me\0source_code\0https://github.com/DEDEvvv/ant-mine\0=======END SECURITY.TXT V1=======\0";
+
+fn keep_security_txt() {
+    let _ = core::hint::black_box(&SECURITY_TXT);
 }
 
 const MINT: Pubkey = solana_program::pubkey!("7PrUyJot9dKnuycunNwBLQQS84fiqTPE7XcfWdtYcgan");
 const TREASURY: Pubkey = solana_program::pubkey!("w9n9KrpSjzUKyQi4bUtyKn8FfTops5kUQc7xFYp4iS6");
+const TOKEN_PROGRAM: Pubkey =
+    solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const VAULT: &[u8] = b"v";
 const USER: &[u8] = b"u";
 const MINER: &[u8] = b"m";
 const STARTER: u8 = 1;
 const DAY: i64 = 86400;
-/// hash_milli, lamports. 与现图鉴一致；0.5H=500。
-const CAT: [(u32, u64); 22] = [
-    (500, 200_000_000),
-    (1000, 0),
-    (1600, 1_200_000_000),
-    (2500, 1_700_000_000),
-    (3800, 2_400_000_000),
-    (5500, 3_200_000_000),
-    (4800, 2_800_000_000),
-    (8000, 4_200_000_000),
-    (12000, 6_000_000_000),
-    (17000, 8_000_000_000),
-    (24000, 10_000_000_000),
-    (34000, 13_000_000_000),
-    (48000, 17_000_000_000),
-    (66000, 22_000_000_000),
-    (90000, 28_000_000_000),
-    (125000, 36_000_000_000),
-    (170000, 46_000_000_000),
-    (230000, 58_000_000_000),
-    (310000, 72_000_000_000),
-    (410000, 88_000_000_000),
-    (530000, 104_000_000_000),
-    (680000, 120_000_000_000),
+const HASH: [u32; 22] = [
+    500, 1000, 1600, 2500, 3800, 5500, 4800, 8000, 12000, 17000, 24000, 34000, 48000, 66000, 90000,
+    125000, 170000, 230000, 310000, 410000, 530000, 680000,
 ];
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct Cfg {
-    bump: u8,
-    /// 每 1000 hash_milli（=1H）每天产出的最小单位。初始化写死，之后不能改。
-    per_h_day: u64,
-}
-#[derive(BorshSerialize, BorshDeserialize)]
-struct User {
-    n: u32,
-    starter: u8,
-}
-#[derive(BorshSerialize, BorshDeserialize)]
-struct Miner {
-    owner: Pubkey,
-    kind: u8,
-    last: i64,
-}
+const PRICE: [u64; 22] = [
+    200_000_000,
+    0,
+    1_200_000_000,
+    1_700_000_000,
+    2_400_000_000,
+    3_200_000_000,
+    2_800_000_000,
+    4_200_000_000,
+    6_000_000_000,
+    8_000_000_000,
+    10_000_000_000,
+    13_000_000_000,
+    17_000_000_000,
+    22_000_000_000,
+    28_000_000_000,
+    36_000_000_000,
+    46_000_000_000,
+    58_000_000_000,
+    72_000_000_000,
+    88_000_000_000,
+    104_000_000_000,
+    120_000_000_000,
+];
 
 entrypoint!(process);
 fn process(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    keep_security_txt();
     if pid != &ID {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -112,14 +97,16 @@ fn init(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if cfg_a.lamports() != 0 {
         return Err(ProgramError::AccountAlreadyInitialized);
     }
-    let space = 1 + 8;
+    let space = 9usize;
     let rent = Rent::get()?.minimum_balance(space);
     invoke_signed(
         &system_instruction::create_account(payer.key, cfg_a.key, rent, space as u64, pid),
         &[payer.clone(), cfg_a.clone(), sys.clone()],
         &[&[VAULT, &[bump]]],
     )?;
-    Cfg { bump, per_h_day }.serialize(&mut &mut cfg_a.data.borrow_mut()[..])?;
+    let d = &mut cfg_a.data.borrow_mut();
+    d[0] = bump;
+    d[1..9].copy_from_slice(&per_h_day.to_le_bytes());
     Ok(())
 }
 
@@ -128,11 +115,10 @@ fn buy(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidInstructionData);
     }
     let kind = data[1];
-    if (kind as usize) >= CAT.len() {
+    if (kind as usize) >= HASH.len() {
         return Err(ProgramError::InvalidArgument);
     }
-    let (hash, price) = CAT[kind as usize];
-    let _ = hash;
+    let price = PRICE[kind as usize];
     let i = &mut acc.iter();
     let owner = next_account_info(i)?;
     let user_a = next_account_info(i)?;
@@ -150,23 +136,25 @@ fn buy(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidSeeds);
     }
     if user_a.lamports() == 0 {
-        let rent = Rent::get()?.minimum_balance(4 + 1);
+        let rent = Rent::get()?.minimum_balance(5);
         invoke_signed(
             &system_instruction::create_account(owner.key, user_a.key, rent, 5, pid),
             &[owner.clone(), user_a.clone(), sys.clone()],
             &[&[USER, owner.key.as_ref(), &[u_b]]],
         )?;
-        User { n: 0, starter: 0 }.serialize(&mut &mut user_a.data.borrow_mut()[..])?;
+        let d = &mut user_a.data.borrow_mut();
+        d[..5].fill(0);
     }
-    let mut u = User::try_from_slice(&user_a.data.borrow())?;
+    let mut n = u32::from_le_bytes(user_a.data.borrow()[0..4].try_into().unwrap());
+    let mut starter = user_a.data.borrow()[4];
     if kind == STARTER {
-        if u.starter != 0 {
+        if starter != 0 {
             return Err(ProgramError::InvalidArgument);
         }
-        u.starter = 1;
+        starter = 1;
     }
-    let id = u.n;
-    u.n = id.saturating_add(1);
+    let id = n;
+    n = id.saturating_add(1);
     if price > 0 {
         invoke(
             &system_instruction::transfer(owner.key, treasury.key, price),
@@ -178,15 +166,24 @@ fn buy(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidSeeds);
     }
     let now = Clock::get()?.unix_timestamp;
-    let space = 32 + 1 + 8;
+    let space = 41usize;
     let rent = Rent::get()?.minimum_balance(space);
     invoke_signed(
         &system_instruction::create_account(owner.key, miner_a.key, rent, space as u64, pid),
         &[owner.clone(), miner_a.clone(), sys.clone()],
         &[&[MINER, owner.key.as_ref(), &id.to_le_bytes(), &[m_b]]],
     )?;
-    Miner { owner: *owner.key, kind, last: now }.serialize(&mut &mut miner_a.data.borrow_mut()[..])?;
-    u.serialize(&mut &mut user_a.data.borrow_mut()[..])?;
+    {
+        let d = &mut miner_a.data.borrow_mut();
+        d[0..32].copy_from_slice(owner.key.as_ref());
+        d[32] = kind;
+        d[33..41].copy_from_slice(&now.to_le_bytes());
+    }
+    {
+        let d = &mut user_a.data.borrow_mut();
+        d[0..4].copy_from_slice(&n.to_le_bytes());
+        d[4] = starter;
+    }
     Ok(())
 }
 
@@ -201,50 +198,75 @@ fn claim(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
     if !owner.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    let cfg = Cfg::try_from_slice(&cfg_a.data.borrow())?;
+    if cfg_a.data.borrow().len() < 9 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let bump = cfg_a.data.borrow()[0];
+    let per_h_day = u64::from_le_bytes(cfg_a.data.borrow()[1..9].try_into().unwrap());
     let (cfg_p, _) = Pubkey::find_program_address(&[VAULT], pid);
     if cfg_a.key != &cfg_p {
         return Err(ProgramError::InvalidSeeds);
     }
-    let mut m = Miner::try_from_slice(&miner_a.data.borrow())?;
-    if m.owner != *owner.key {
+    if miner_a.data.borrow().len() < 41 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let miner_owner = Pubkey::new_from_array(miner_a.data.borrow()[0..32].try_into().unwrap());
+    if miner_owner != *owner.key {
         return Err(ProgramError::IllegalOwner);
     }
+    let kind = miner_a.data.borrow()[32];
+    let last = i64::from_le_bytes(miner_a.data.borrow()[33..41].try_into().unwrap());
+    if (kind as usize) >= HASH.len() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let now = Clock::get()?.unix_timestamp;
-    if now <= m.last {
+    if now <= last {
         return Ok(());
     }
-    let (hash, _) = CAT[m.kind as usize];
-    let elapsed = (now - m.last) as u128;
+    let hash = HASH[kind as usize];
+    let elapsed = (now - last) as u128;
     let amt = (hash as u128)
         .saturating_mul(elapsed)
-        .saturating_mul(cfg.per_h_day as u128)
+        .saturating_mul(per_h_day as u128)
         / 1000u128
         / (DAY as u128);
-    m.last = now;
-    m.serialize(&mut &mut miner_a.data.borrow_mut()[..])?;
+    miner_a.data.borrow_mut()[33..41].copy_from_slice(&now.to_le_bytes());
     if amt == 0 {
         return Ok(());
     }
-    let vault = TokenAccount::unpack(&vault_ata.data.borrow())?;
-    if vault.mint != MINT {
+    let vd = vault_ata.data.borrow();
+    if vd.len() < 72 {
         return Err(ProgramError::InvalidAccountData);
     }
-    let pay = core::cmp::min(amt, vault.amount as u128) as u64;
+    let mint = Pubkey::new_from_array(vd[0..32].try_into().unwrap());
+    if mint != MINT {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let vault_amt = u64::from_le_bytes(vd[64..72].try_into().unwrap());
+    drop(vd);
+    let pay = core::cmp::min(amt, vault_amt as u128) as u64;
     if pay == 0 {
         return Ok(());
     }
+    if token_p.key != &TOKEN_PROGRAM {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let mut ix_data = [0u8; 9];
+    ix_data[0] = 3;
+    ix_data[1..9].copy_from_slice(&pay.to_le_bytes());
+    let ix = Instruction {
+        program_id: TOKEN_PROGRAM,
+        accounts: vec![
+            AccountMeta::new(*vault_ata.key, false),
+            AccountMeta::new(*dest.key, false),
+            AccountMeta::new_readonly(cfg_p, true),
+        ],
+        data: ix_data.to_vec(),
+    };
     invoke_signed(
-        &token_ix::transfer(
-            token_p.key,
-            vault_ata.key,
-            dest.key,
-            &cfg_p,
-            &[],
-            pay,
-        )?,
+        &ix,
         &[vault_ata.clone(), dest.clone(), cfg_a.clone(), token_p.clone()],
-        &[&[VAULT, &[cfg.bump]]],
+        &[&[VAULT, &[bump]]],
     )?;
     Ok(())
 }
