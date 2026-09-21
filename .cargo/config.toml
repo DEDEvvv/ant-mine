@@ -1,0 +1,8 @@
+[target.sbf-solana-solana]
+rustflags = ["-C", "link-arg=--osabi=none"]
+
+[target.sbpf-solana-solana]
+rustflags = ["-C", "link-arg=--osabi=none"]
+
+[target.bpfel-unknown-unknown]
+rustflags = ["-C", "link-arg=--osabi=none"]
