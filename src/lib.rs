@@ -12,7 +12,7 @@ use solana_program::{
     sysvar::{clock::Clock, Sysvar},
 };
 
-declare_id!("APNv3yTr5Zd5UYrv2LpHnfoLQ1WKA8K3gZ1Sk3DZeZL5");
+declare_id!("5cP76Ch3B8f3Pj6mnXC5V19RhZFhuZBQhjNansoQFKp9");
 
 /// Solscan 认这段魔法字。必须真正编进 ELF，不能靠会被删掉的宏。
 #[used]
@@ -23,42 +23,21 @@ fn keep_security_txt() {
     let _ = core::hint::black_box(&SECURITY_TXT);
 }
 
-const MINT: Pubkey = solana_program::pubkey!("7PrUyJot9dKnuycunNwBLQQS84fiqTPE7XcfWdtYcgan");
-const TREASURY: Pubkey = solana_program::pubkey!("w9n9KrpSjzUKyQi4bUtyKn8FfTops5kUQc7xFYp4iS6");
+const MINT: Pubkey = solana_program::pubkey!("D7ahcwSv6GkcBpPJEKizUz8eJFoV4g2FWaUmZHxargan");
 const TOKEN_PROGRAM: Pubkey =
     solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const VAULT: &[u8] = b"v";
 const USER: &[u8] = b"u";
 const MINER: &[u8] = b"m";
-const STARTER: u8 = 1;
 const DAY: i64 = 86400;
-const HASH: [u32; 22] = [
-    500, 1000, 1600, 2500, 3800, 5500, 4800, 8000, 12000, 17000, 24000, 34000, 48000, 66000, 90000,
-    125000, 170000, 230000, 310000, 410000, 530000, 680000,
-];
-const PRICE: [u64; 22] = [
-    200_000_000,
-    0,
-    1_200_000_000,
-    1_700_000_000,
-    2_400_000_000,
-    3_200_000_000,
-    2_800_000_000,
-    4_200_000_000,
-    6_000_000_000,
-    8_000_000_000,
-    10_000_000_000,
-    13_000_000_000,
-    17_000_000_000,
-    22_000_000_000,
-    28_000_000_000,
-    36_000_000_000,
-    46_000_000_000,
-    58_000_000_000,
-    72_000_000_000,
-    88_000_000_000,
-    104_000_000_000,
-    120_000_000_000,
+/// 1 H/s 每天 5555.555555 枚。22 档平均 1.5 H/s，500 台约 12 天挖完 5000 万。
+const PER_H_DAY: u64 = 5_555_555_555;
+const MAX_MINERS: u16 = 500;
+const KINDS: usize = 22;
+/// 1.0 H/s ~ 2.0 H/s，最高不超过最低的一倍。
+const HASH: [u32; KINDS] = [
+    1000, 1048, 1095, 1143, 1190, 1238, 1286, 1333, 1381, 1429, 1476, 1524, 1571, 1619, 1667, 1714,
+    1762, 1810, 1857, 1905, 1952, 2000,
 ];
 
 entrypoint!(process);
@@ -69,7 +48,7 @@ fn process(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
     }
     match data.first().copied() {
         Some(0) => init(pid, acc, data),
-        Some(1) => buy(pid, acc, data),
+        Some(1) => mint(pid, acc),
         Some(2) => claim(pid, acc),
         _ => Err(ProgramError::InvalidInstructionData),
     }
@@ -86,10 +65,7 @@ fn init(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if data.len() < 9 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let per_h_day = u64::from_le_bytes(data[1..9].try_into().unwrap());
-    if per_h_day == 0 {
-        return Err(ProgramError::InvalidArgument);
-    }
+    let per_h_day = PER_H_DAY;
     let (cfg_p, bump) = Pubkey::find_program_address(&[VAULT], pid);
     if cfg_a.key != &cfg_p {
         return Err(ProgramError::InvalidSeeds);
@@ -97,7 +73,7 @@ fn init(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if cfg_a.lamports() != 0 {
         return Err(ProgramError::AccountAlreadyInitialized);
     }
-    let space = 9usize;
+    let space = 12usize;
     let rent = Rent::get()?.minimum_balance(space);
     invoke_signed(
         &system_instruction::create_account(payer.key, cfg_a.key, rent, space as u64, pid),
@@ -107,83 +83,91 @@ fn init(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let d = &mut cfg_a.data.borrow_mut();
     d[0] = bump;
     d[1..9].copy_from_slice(&per_h_day.to_le_bytes());
+    d[9..11].copy_from_slice(&0u16.to_le_bytes());
+    d[11] = 0;
     Ok(())
 }
 
-fn buy(pid: &Pubkey, acc: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 2 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let kind = data[1];
-    if (kind as usize) >= HASH.len() {
-        return Err(ProgramError::InvalidArgument);
-    }
-    let price = PRICE[kind as usize];
+fn roll_kind(owner: &Pubkey, minted: u16, slot: u64) -> u8 {
+    let mut seed = slot ^ (minted as u64);
+    let bytes = owner.as_ref();
+    seed ^= u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    seed ^= u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+    seed ^= u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+    seed ^= u64::from_le_bytes(bytes[24..32].try_into().unwrap());
+    (seed % KINDS as u64) as u8
+}
+
+fn mint(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
     let i = &mut acc.iter();
     let owner = next_account_info(i)?;
     let user_a = next_account_info(i)?;
     let miner_a = next_account_info(i)?;
-    let treasury = next_account_info(i)?;
+    let cfg_a = next_account_info(i)?;
     let sys = next_account_info(i)?;
     if !owner.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if treasury.key != &TREASURY {
+    if cfg_a.data.borrow().len() < 12 {
         return Err(ProgramError::InvalidAccountData);
+    }
+    let (cfg_p, _) = Pubkey::find_program_address(&[VAULT], pid);
+    if cfg_a.key != &cfg_p {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if cfg_a.data.borrow()[11] != 0 {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let minted = u16::from_le_bytes(cfg_a.data.borrow()[9..11].try_into().unwrap());
+    if minted >= MAX_MINERS {
+        return Err(ProgramError::InvalidArgument);
     }
     let (u_p, u_b) = Pubkey::find_program_address(&[USER, owner.key.as_ref()], pid);
     if user_a.key != &u_p {
         return Err(ProgramError::InvalidSeeds);
     }
-    if user_a.lamports() == 0 {
-        let rent = Rent::get()?.minimum_balance(5);
-        invoke_signed(
-            &system_instruction::create_account(owner.key, user_a.key, rent, 5, pid),
-            &[owner.clone(), user_a.clone(), sys.clone()],
-            &[&[USER, owner.key.as_ref(), &[u_b]]],
-        )?;
-        let d = &mut user_a.data.borrow_mut();
-        d[..5].fill(0);
+    if user_a.lamports() != 0 {
+        return Err(ProgramError::AccountAlreadyInitialized);
     }
-    let mut n = u32::from_le_bytes(user_a.data.borrow()[0..4].try_into().unwrap());
-    let mut starter = user_a.data.borrow()[4];
-    if kind == STARTER {
-        if starter != 0 {
-            return Err(ProgramError::InvalidArgument);
-        }
-        starter = 1;
-    }
-    let id = n;
-    n = id.saturating_add(1);
-    if price > 0 {
-        invoke(
-            &system_instruction::transfer(owner.key, treasury.key, price),
-            &[owner.clone(), treasury.clone(), sys.clone()],
-        )?;
-    }
-    let (m_p, m_b) = Pubkey::find_program_address(&[MINER, owner.key.as_ref(), &id.to_le_bytes()], pid);
+    let (m_p, m_b) = Pubkey::find_program_address(&[MINER, owner.key.as_ref()], pid);
     if miner_a.key != &m_p {
         return Err(ProgramError::InvalidSeeds);
     }
+    if miner_a.lamports() != 0 {
+        return Err(ProgramError::AccountAlreadyInitialized);
+    }
+    let slot = Clock::get()?.slot;
+    let kind = roll_kind(owner.key, minted, slot);
     let now = Clock::get()?.unix_timestamp;
-    let space = 41usize;
-    let rent = Rent::get()?.minimum_balance(space);
+
+    let user_rent = Rent::get()?.minimum_balance(2);
     invoke_signed(
-        &system_instruction::create_account(owner.key, miner_a.key, rent, space as u64, pid),
+        &system_instruction::create_account(owner.key, user_a.key, user_rent, 2, pid),
+        &[owner.clone(), user_a.clone(), sys.clone()],
+        &[&[USER, owner.key.as_ref(), &[u_b]]],
+    )?;
+    {
+        let d = &mut user_a.data.borrow_mut();
+        d[0] = 1;
+        d[1] = kind;
+    }
+
+    let miner_rent = Rent::get()?.minimum_balance(42);
+    invoke_signed(
+        &system_instruction::create_account(owner.key, miner_a.key, miner_rent, 42, pid),
         &[owner.clone(), miner_a.clone(), sys.clone()],
-        &[&[MINER, owner.key.as_ref(), &id.to_le_bytes(), &[m_b]]],
+        &[&[MINER, owner.key.as_ref(), &[m_b]]],
     )?;
     {
         let d = &mut miner_a.data.borrow_mut();
         d[0..32].copy_from_slice(owner.key.as_ref());
         d[32] = kind;
         d[33..41].copy_from_slice(&now.to_le_bytes());
+        d[41] = 0;
     }
-    {
-        let d = &mut user_a.data.borrow_mut();
-        d[0..4].copy_from_slice(&n.to_le_bytes());
-        d[4] = starter;
-    }
+
+    let next = minted.saturating_add(1);
+    cfg_a.data.borrow_mut()[9..11].copy_from_slice(&next.to_le_bytes());
     Ok(())
 }
 
@@ -198,17 +182,27 @@ fn claim(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
     if !owner.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if cfg_a.data.borrow().len() < 9 {
+    if cfg_a.data.borrow().len() < 12 {
         return Err(ProgramError::InvalidAccountData);
     }
+    let ended = cfg_a.data.borrow()[11] != 0;
     let bump = cfg_a.data.borrow()[0];
     let per_h_day = u64::from_le_bytes(cfg_a.data.borrow()[1..9].try_into().unwrap());
     let (cfg_p, _) = Pubkey::find_program_address(&[VAULT], pid);
     if cfg_a.key != &cfg_p {
         return Err(ProgramError::InvalidSeeds);
     }
-    if miner_a.data.borrow().len() < 41 {
+    let (m_p, _) = Pubkey::find_program_address(&[MINER, owner.key.as_ref()], pid);
+    if miner_a.key != &m_p {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if miner_a.data.borrow().len() < 42 {
         return Err(ProgramError::InvalidAccountData);
+    }
+    let miner_dead = miner_a.data.borrow()[41] != 0;
+    if ended || miner_dead {
+        miner_a.data.borrow_mut()[41] = 1;
+        return Ok(());
     }
     let miner_owner = Pubkey::new_from_array(miner_a.data.borrow()[0..32].try_into().unwrap());
     if miner_owner != *owner.key {
@@ -230,7 +224,6 @@ fn claim(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
         .saturating_mul(per_h_day as u128)
         / 1000u128
         / (DAY as u128);
-    miner_a.data.borrow_mut()[33..41].copy_from_slice(&now.to_le_bytes());
     if amt == 0 {
         return Ok(());
     }
@@ -251,6 +244,20 @@ fn claim(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
     if token_p.key != &TOKEN_PROGRAM {
         return Err(ProgramError::IncorrectProgramId);
     }
+    let dd = dest.data.borrow();
+    if dd.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let dest_mint = Pubkey::new_from_array(dd[0..32].try_into().unwrap());
+    if dest_mint != MINT {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let dest_owner = Pubkey::new_from_array(dd[32..64].try_into().unwrap());
+    if dest_owner != *owner.key {
+        return Err(ProgramError::IllegalOwner);
+    }
+    drop(dd);
+    miner_a.data.borrow_mut()[33..41].copy_from_slice(&now.to_le_bytes());
     let mut ix_data = [0u8; 9];
     ix_data[0] = 3;
     ix_data[1..9].copy_from_slice(&pay.to_le_bytes());
@@ -268,5 +275,9 @@ fn claim(pid: &Pubkey, acc: &[AccountInfo]) -> ProgramResult {
         &[vault_ata.clone(), dest.clone(), cfg_a.clone(), token_p.clone()],
         &[&[VAULT, &[bump]]],
     )?;
+    if pay == vault_amt {
+        cfg_a.data.borrow_mut()[11] = 1;
+        miner_a.data.borrow_mut()[41] = 1;
+    }
     Ok(())
 }
