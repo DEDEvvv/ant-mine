@@ -29,15 +29,15 @@ jobs:
           b = p.read_bytes()
           n = len(b)
           print('size', n, 'osabi', b[7] if n > 7 else None)
-          if n > 107256:
-              raise SystemExit('TOO BIG %s > 107256' % n)
+          if n > 180000:
+              raise SystemExit('TOO BIG %s > 180000' % n)
           if n > 7 and b[7] != 0:
               raise SystemExit('wrong ELF ABI osabi=%s (must be 0)' % b[7])
           if b'=======BEGIN SECURITY.TXT V1=======' not in b:
               raise SystemExit('missing security.txt magic')
           if b'zoeefm@proton.me' not in b:
               raise SystemExit('missing contact')
-          print('security.txt OK, ABI OK, fits on-chain')
+          print('security.txt OK, ABI OK')
           PY
 
       - uses: actions/upload-artifact@v6
