@@ -12,7 +12,7 @@ use solana_program::{
     sysvar::{clock::Clock, Sysvar},
 };
 
-declare_id!("5CP77XBpPsv1K3tsZtx4HsPKxYbavxmMCma6tEcFTdUS");
+declare_id!("4sYJ8JMvy3j1GLbupcihpcgUdeEcus9j4fp5mWv8eWjV");
 
 /// Solscan 认这段魔法字。必须真正编进 ELF，不能靠会被删掉的宏。
 #[used]
