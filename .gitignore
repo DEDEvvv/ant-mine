@@ -1,5 +1,2 @@
 /target
-**/*keypair*.json
-**/*.so
-.env
-.user.ini
+*.so
